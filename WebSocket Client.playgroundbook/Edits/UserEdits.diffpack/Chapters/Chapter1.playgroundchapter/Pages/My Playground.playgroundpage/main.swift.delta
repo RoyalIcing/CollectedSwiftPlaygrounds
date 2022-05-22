@@ -11,7 +11,7 @@ import Combine
 import SwiftUI
 import PlaygroundSupport
 
-let smallMarkdown = "# Hello"
+let smallMarkdown = "# Hello World"
 let mediumMarkdown = UserModule.mediumMarkdown
 let largeMarkdown = UserModule.largeMarkdown
 
@@ -92,10 +92,8 @@ class Client: ObservableObject {
     @Published var receivedErrorCount = 0
     @Published var roundTrips = RoundTripTimes()
     
-//        private var url: URL { URL(string: "ws://localhost:4321/1/ws")! }
-    private var url: URL {
-        URL(string: "wss://collected.press/1/ws")!
-    }
+//    var url: URL { URL(string: "ws://localhost:4321/1/ws")! }
+    var url: URL { URL(string: "wss://collected.press/1/ws")! }
     
     private func received(message: URLSessionWebSocketTask.Message) async {
         let receivedOn = Date()
@@ -165,6 +163,15 @@ class Client: ObservableObject {
         printNow("Sent")
         try? await self.socket?.send(message)
     }
+    
+    func sendEchoRPC(source: String) async {
+        let id = UUID().uuidString
+        let request = JSONRPC2Request(id: id, method: "echo", params: ["source": source])
+        let message = try! request.toMessage()
+        self.roundTrips.didSend(id: id)
+        printNow("Sent")
+        try? await self.socket?.send(message)
+    }
 }
 
 struct FrameFraction: View {
@@ -189,34 +196,61 @@ struct Main: View {
             
             Spacer()
             
-            Button("Send Ping") {
-                Task {
-                    await client.sendPing()
+            VStack {
+                Button("Send Ping") {
+                    Task {
+                        await client.sendPing()
+                    }
+                }
+                
+                Divider()
+                
+                Button("Send Markdown (Small)") {
+                    Task {
+                        await client.sendMarkdownRPC(markdown: smallMarkdown)
+                    }
+                }
+                
+                Button("Send Markdown (5KB)") {
+                    Task {
+                        await client.sendMarkdownRPC(markdown: mediumMarkdown)
+                    }
+                }
+                
+                Button("Send Markdown (200KB)") {
+                    Task {
+                        await client.sendMarkdownRPC(markdown: largeMarkdown)
+                    }
+                }
+                
+                Divider()
+                
+                Button("Echo Hello World") {
+                    Task {
+                        await client.sendEchoRPC(source: smallMarkdown)
+                    }
+                }
+                
+                Button("Echo 5KB") {
+                    Task {
+                        await client.sendEchoRPC(source: mediumMarkdown)
+                    }
+                }
+                
+                Button("Echo 200KB") {
+                    Task {
+                        await client.sendEchoRPC(source: largeMarkdown)
+                    }
                 }
             }
             
-            Button("Send Markdown (Small)") {
-                Task {
-                    await client.sendMarkdownRPC(markdown: smallMarkdown)
-                }
-            }
-            
-            Button("Send Markdown (5KB)") {
-                Task {
-                    await client.sendMarkdownRPC(markdown: mediumMarkdown)
-                }
-            }
-            
-            Button("Send Markdown (200KB)") {
-                Task {
-                    await client.sendMarkdownRPC(markdown: largeMarkdown)
-                }
-            }
+            Divider()
             
             Spacer()
             
             Text("Received: \(client.receivedMessages.count)")
             Text("Errors: \(client.receivedErrorCount)")
+            Text("\(client.url)")
             
             List {
                 ForEach(client.receivedMessages.indices.reversed(), id: \.self) { index in
@@ -257,7 +291,7 @@ struct Main: View {
 PlaygroundPage.current.setLiveView(Main())
 </string>
 			<key>ModifiedRange</key>
-			<string>{0, 7390}</string>
+			<string>{0, 8575}</string>
 			<key>OriginalContent</key>
 			<string>
 </string>
