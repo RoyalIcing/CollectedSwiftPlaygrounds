@@ -4,7 +4,7 @@ Swift Playgrounds for interacting with Collected.Press
 
 ## WebSocket Client
 
-Connects via a WebSocket to <https://collected.press>, which renders Markdown and is hosted on [Cloudflare Workers](https://workers.cloudflare.com).
+Connects via a WebSocket to <https://collected.press> ([open source on GitHub](https://github.com/ThatCollected/collected-press), which renders Markdown and is hosted on [Cloudflare Workers](https://workers.cloudflare.com).
 
 You can send various sized pieces of Markdown, and see how long it takes to do a round trip from your computer to the server and back. You can see it in seconds and in number of frames (assuming 60FPS).
 
