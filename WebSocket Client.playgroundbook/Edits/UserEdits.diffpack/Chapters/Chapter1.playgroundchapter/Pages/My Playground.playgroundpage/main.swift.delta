@@ -1,0 +1,271 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Diff</key>
+	<array>
+		<dict>
+			<key>ModifiedContent</key>
+			<string>import Foundation
+import Combine
+import SwiftUI
+import PlaygroundSupport
+
+let smallMarkdown = "# Hello"
+let mediumMarkdown = UserModule.mediumMarkdown
+let largeMarkdown = UserModule.largeMarkdown
+
+let df = DateFormatter()
+df.dateFormat = "y-MM-dd H:mm:ss.SSSS"
+func printNow(_ prefix: String) {
+    let d = Date()
+    print("\(prefix) \(df.string(from: d))")
+}
+
+struct JSONRPC2Request: Codable {
+    let jsonrpc = "2.0"
+    var id: String
+    var method: String
+    var params: [String:String]
+    
+    func toMessage() throws -&gt; URLSessionWebSocketTask.Message {
+        let encoded = try JSONEncoder().encode(self)
+        return .data(encoded)
+    }
+}
+
+struct JSONRPC2Response: Codable {
+    var jsonrpc = "2.0"
+    var id: String
+    var result: [String:String]?
+    var error: String?
+    
+    init(id: String, result: [String:String]) {
+        self.id = id
+        self.result = result
+    }
+    
+    init(id: String, error: String) {
+        self.id = id
+        self.error = error
+    }
+    
+    init(message: URLSessionWebSocketTask.Message) throws {
+        switch message {
+        case .data(let data):
+            self = try JSONDecoder().decode(Self.self, from: data)
+        case .string(let string):
+            let data = string.data(using: .utf8)!
+            self = try JSONDecoder().decode(Self.self, from: data)
+        }
+    }
+}
+
+// https://developer.mozilla.org/en-US/docs/Glossary/Round_Trip_Time_(RTT)
+// https://www.cloudflare.com/en-au/learning/cdn/glossary/round-trip-time-rtt/
+struct RoundTripTimes {
+    var sentIDsOn: [String:Date] = [:]
+    var receivedIDsOn: [String:Date] = [:]
+    
+    mutating func didSend(id: String, when: Date = Date()) {
+        sentIDsOn[id] = when
+    }
+    
+    mutating func didReceive(id: String, when: Date = Date()) {
+        receivedIDsOn[id] = when
+    }
+    
+    subscript(id: String) -&gt; TimeInterval? {
+        guard let sent = sentIDsOn[id], let received = receivedIDsOn[id] else {
+            return nil
+        }
+        
+        return received.timeIntervalSinceReferenceDate - sent.timeIntervalSinceReferenceDate
+    }
+}
+
+class Client: ObservableObject {
+    private var socket: URLSessionWebSocketTask?
+    private var receiveTask: Task&lt;(), Never&gt;?
+    
+    @Published var receivedMessages: Array&lt;URLSessionWebSocketTask.Message&gt; = []
+    @Published var receivedErrorCount = 0
+    @Published var roundTrips = RoundTripTimes()
+    
+//        private var url: URL { URL(string: "ws://localhost:4321/1/ws")! }
+    private var url: URL {
+        URL(string: "wss://collected.press/1/ws")!
+    }
+    
+    private func received(message: URLSessionWebSocketTask.Message) async {
+        let receivedOn = Date()
+        printNow("Received")
+        await MainActor.run {
+            self.receivedMessages.append(message)
+            
+            do {
+                let reply = try JSONRPC2Response(message: message)
+                self.roundTrips.didReceive(id: reply.id, when: receivedOn)
+            }
+            catch let error {
+                print(error)
+            }
+        }
+    }
+    
+    private func received(error: Swift.Error) async {
+        printNow("Received")
+        await MainActor.run {
+            self.receivedErrorCount += 1
+        }
+    }
+    
+    init() {}
+    
+    func start() {
+        let session = URLSession.shared
+        print("Connecting WebSocket to \(url)")
+        let socket = session.webSocketTask(with: url)
+        socket.resume()
+        
+        self.receiveTask = Task.detached { [weak self] in
+            while true {
+                if Task.isCancelled {
+                    return
+                }
+                
+                do {
+                    let message = try await socket.receive()
+                    guard let self = self else { return }
+                    await self.received(message: message)
+                }
+                catch let error {
+                    await self?.received(error: error)
+                    break
+                }
+            }
+        }
+        
+        self.socket = socket
+    }
+    
+    func stop() {
+        self.receiveTask?.cancel()
+    }
+    
+    func sendPing() async {
+        try? await self.socket?.send(.string("Ping"))
+    }
+    
+    func sendMarkdownRPC(markdown: String) async {
+        let id = UUID().uuidString
+        let request = JSONRPC2Request(id: id, method: "markdown", params: ["type": "text/markdown", "source": markdown])
+        let message = try! request.toMessage()
+        self.roundTrips.didSend(id: id)
+        printNow("Sent")
+        try? await self.socket?.send(message)
+    }
+}
+
+struct FrameFraction: View {
+    let duration: TimeInterval
+    
+    var frames: Int {
+        Int((duration * 60).rounded(.up))
+    }
+    
+    var body: some View {
+        let frames = self.frames
+        Text("\(frames) \(frames == 1 ? "frame" : "frames")")
+    }
+}
+
+struct Main: View {
+    @StateObject var client = Client()
+    
+    var body: some View {
+        VStack {
+            Text("SwiftUI + Swift Async WebSocket Client").font(.title)
+            
+            Spacer()
+            
+            Button("Send Ping") {
+                Task {
+                    await client.sendPing()
+                }
+            }
+            
+            Button("Send Markdown (Small)") {
+                Task {
+                    await client.sendMarkdownRPC(markdown: smallMarkdown)
+                }
+            }
+            
+            Button("Send Markdown (5KB)") {
+                Task {
+                    await client.sendMarkdownRPC(markdown: mediumMarkdown)
+                }
+            }
+            
+            Button("Send Markdown (200KB)") {
+                Task {
+                    await client.sendMarkdownRPC(markdown: largeMarkdown)
+                }
+            }
+            
+            Spacer()
+            
+            Text("Received: \(client.receivedMessages.count)")
+            Text("Errors: \(client.receivedErrorCount)")
+            
+            List {
+                ForEach(client.receivedMessages.indices.reversed(), id: \.self) { index in
+                    let message = client.receivedMessages[index]
+                    
+                    let decoded = try? JSONRPC2Response(message: message)
+                    let id = decoded?.id ?? "?"
+                    
+                    HStack {
+                        Text("\(index + 1)")
+                            .font(.system(size: 10))
+                            .frame(minWidth: 16)
+                            .foregroundColor(Color.black)
+                            .background(Color.gray)
+                            .cornerRadius(100)
+                        
+                        if let decoded = decoded, let rtt = client.roundTrips[decoded.id] {
+                            Text("\(rtt)s")
+                            FrameFraction(duration: rtt)
+                        }
+                        
+                        switch message {
+                        case .string(let s):
+                            Text(s.prefix(100))
+                        case .data(let d):
+                            Text("data of length: \(d.count)")
+                        }
+                    }
+                }
+            }
+        }
+        .padding()
+        .onAppear(perform: client.start)
+        .onDisappear(perform: client.stop)
+    }
+}
+
+PlaygroundPage.current.setLiveView(Main())
+</string>
+			<key>ModifiedRange</key>
+			<string>{0, 7390}</string>
+			<key>OriginalContent</key>
+			<string>
+</string>
+			<key>OriginalRange</key>
+			<string>{0, 1}</string>
+		</dict>
+	</array>
+	<key>File</key>
+	<string>Chapters/Chapter1.playgroundchapter/Pages/My Playground.playgroundpage/main.swift</string>
+</dict>
+</plist>
